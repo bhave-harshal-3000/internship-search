@@ -1,0 +1,7 @@
+playwright
+playwright-stealth
+requests
+beautifulsoup4
+pandas
+openpyxl
+python-dotenv
