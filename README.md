@@ -1,6 +1,6 @@
-# Intern-Search
+# Internship-Search
 
-Intern-Search is a Python-based scraper suite focused on disability-friendly job and internship listings. It collects opportunities from targeted sources and writes one Excel file per source into the output directory.
+Internship-Search is a Python-based scraper suite focused on disability-friendly job and internship listings. It collects opportunities from targeted sources and writes one Excel file per source into the output directory.
 
 ## Features
 
