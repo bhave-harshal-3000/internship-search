@@ -111,7 +111,7 @@ def _render_downloads(sources: list[dict[str, str]], has_run: bool) -> None:
 
 st.set_page_config(page_title="Internship-Search", page_icon="\U0001F50D", layout="wide")
 
-st.title("Intern-Search")
+st.title("Internship-Search")
 st.caption("Disability-friendly job and internship scraper")
 
 if sys.platform == "win32":
