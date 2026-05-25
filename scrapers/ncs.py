@@ -35,7 +35,6 @@ SOURCE = "ncs"
 OUTPUT_FILENAME = "ncs.xlsx"
 BASE_URL = "https://betacloud.ncs.gov.in"
 LISTING_URL = f"{BASE_URL}/job-listing"
-API_SEARCH_URL = f"{BASE_URL}/api/v1/job-posts/search"
 FILTER_PARAMS = {"sortBy": "NEWEST", "pwdCandidateWelcome": "true"}
 
 
@@ -175,28 +174,6 @@ def _rows_from_html(html: str, page_url: str) -> list[dict[str, object]]:
     return rows
 
 
-def _api_scrape(max_pages: int) -> list[dict[str, object]]:
-    session = requests.Session()
-    session.headers.update(HEADERS)
-    rows: list[dict[str, object]] = []
-
-    for page_number in range(1, max_pages + 1):
-        params = {"page": page_number - 1, "size": 20}
-        response = session.post(API_SEARCH_URL, params=params, json=FILTER_PARAMS, timeout=30)
-        response.raise_for_status()
-        page_rows: list[dict[str, object]] = []
-        page_rows = _rows_from_json(response.json())
-
-        rows.extend(page_rows)
-        _, killed_preview = apply_kill_filter(rows)
-        log_progress(f"{SOURCE}:api", page_number, len(rows), killed_preview)
-        if not page_rows and page_number > 1:
-            break
-        time.sleep(SLEEP_BETWEEN_REQUESTS)
-
-    return rows
-
-
 def _requests_scrape(max_pages: int) -> list[dict[str, object]]:
     session = requests.Session()
     session.headers.update(HEADERS)
@@ -223,39 +200,64 @@ def _requests_scrape(max_pages: int) -> list[dict[str, object]]:
 
 
 def _dom_rows(page) -> list[dict[str, object]]:
-    cards = page.evaluate(
-        """
-        () => {
-          const nodes = Array.from(document.querySelectorAll(
-            'article, div[class*="job-card"], div[class*="JobCard"], div[class*="jobCard"], li[class*="job"]'
-          ));
-          return nodes.map((el) => ({
-            text: el.innerText || '',
-            href: (el.querySelector('a[href]') || {}).href || ''
-          })).filter((item) => item.text && item.text.length > 40);
-        }
-        """
-    )
-    rows: list[dict[str, object]] = []
-    for card in cards:
-        text = clean_text(card.get("text"))
-        title = clean_text(text.split("\n")[0] if "\n" in text else text[:100])
-        row = {
-            "title": title,
-            "company": "",
-            "location": "",
-            "is_remote": any(token in text.lower() for token in ["work from home", "remote", "wfh"]),
-            "type": "job",
-            "inclusion_type": EXPLICIT_PWD,
-            "stipend_or_salary_raw": "",
-            "duration": "",
-            "posted_at": "",
-            "apply_url": absolute_url(BASE_URL, card.get("href")),
-            "source": SOURCE,
-            "description_snippet": text[:300],
-        }
-        rows.append(apply_money(row))
-    return rows
+        cards = page.evaluate(
+                """
+                () => {
+                    const nodes = Array.from(document.querySelectorAll('div.col-md-10'))
+                        .filter((el) => el.querySelector('h6.job-title'));
+                    return nodes.map((el) => {
+                        const title = el.querySelector('h6.job-title')?.innerText || '';
+                        const metaSpans = Array.from(el.querySelectorAll('.location span'));
+                        const location = metaSpans[0]?.innerText || '';
+                        const company = metaSpans[1]?.innerText || '';
+                        const descriptionBlocks = Array.from(el.querySelectorAll('div.primary-skill-list'))
+                            .map((node) => node.innerText || '')
+                            .filter(Boolean);
+                        const description = descriptionBlocks.join(' ');
+                        const salary = el.querySelector('small.salary')?.innerText || '';
+                        const postedAt = el.querySelector('small.post-date')?.innerText || '';
+                        const linkNode = el.querySelector('a[href]') || el.closest('a[href]');
+                        const href = linkNode ? linkNode.href : '';
+                        return {
+                            title,
+                            company,
+                            location,
+                            description,
+                            salary,
+                            postedAt,
+                            href,
+                        };
+                    });
+                }
+                """
+        )
+        rows: list[dict[str, object]] = []
+        for card in cards:
+                title = clean_text(card.get("title"))
+                company = clean_text(card.get("company"))
+                location = clean_text(card.get("location"))
+                description = clean_text(card.get("description"))
+                salary = clean_text(card.get("salary"))
+                posted_at = clean_text(card.get("postedAt"))
+                apply_url = clean_text(card.get("href"))
+                if not title:
+                        continue
+                row = {
+                        "title": title,
+                        "company": company,
+                        "location": location,
+                        "is_remote": any(token in f"{location} {description}".lower() for token in ["work from home", "remote", "wfh"]),
+                        "type": "job",
+                        "inclusion_type": EXPLICIT_PWD,
+                        "stipend_or_salary_raw": salary,
+                        "duration": "",
+                        "posted_at": posted_at,
+                        "apply_url": apply_url,
+                        "source": SOURCE,
+                        "description_snippet": description[:300],
+                }
+                rows.append(apply_money(row))
+        return rows
 
 
 def _playwright_scrape(max_pages: int) -> list[dict[str, object]]:
@@ -313,9 +315,9 @@ def scrape(max_pages: int = MAX_PAGES, output_dir: str | Path = "output") -> dic
     all_records: list[dict[str, object]]
 
     try:
-        all_records = _api_scrape(max_pages)
+        all_records = _playwright_scrape(max_pages)
     except Exception as exc:
-        print(f"[{SOURCE}] API path failed: {exc}", flush=True)
+        print(f"[{SOURCE}] Playwright path failed: {exc}", flush=True)
         all_records = []
 
     if not all_records:
@@ -327,9 +329,9 @@ def scrape(max_pages: int = MAX_PAGES, output_dir: str | Path = "output") -> dic
 
     if not all_records:
         try:
-            all_records = _playwright_scrape(max_pages)
+            all_records = _rows_from_html(request_with_retries(requests.Session(), LISTING_URL).text, LISTING_URL)
         except Exception as exc:
-            print(f"[{SOURCE}] Playwright fallback failed: {exc}", flush=True)
+            print(f"[{SOURCE}] HTML fallback failed: {exc}", flush=True)
             all_records = []
 
     total_scraped = len(all_records)
