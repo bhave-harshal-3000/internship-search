@@ -109,7 +109,7 @@ def _render_downloads(sources: list[dict[str, str]], has_run: bool) -> None:
         st.warning("Run the scrapers to generate downloadable XLSX files.")
 
 
-st.set_page_config(page_title="Intern-Search", page_icon="\U0001F50D", layout="wide")
+st.set_page_config(page_title="Internship-Search", page_icon="\U0001F50D", layout="wide")
 
 st.title("Intern-Search")
 st.caption("Disability-friendly job and internship scraper")
@@ -143,6 +143,7 @@ with left_col:
         st.session_state.has_run = True
         st.session_state.last_run_sources = list(selected_sources)
         st.success("Done")
+        st.success("Something --------")
         print("Something --------")
 
 with right_col:
