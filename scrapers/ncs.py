@@ -6,7 +6,7 @@ import time
 import re
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urlencode, urljoin
 
 import requests
 from bs4 import BeautifulSoup
@@ -35,7 +35,8 @@ SOURCE = "ncs"
 OUTPUT_FILENAME = "ncs.xlsx"
 BASE_URL = "https://betacloud.ncs.gov.in"
 LISTING_URL = f"{BASE_URL}/job-listing"
-FILTER_PARAMS = {"sortBy": "NEWEST", "pwdCandidateWelcome": "true"}
+FILTER_PARAMS = {"sortBy": "NEWEST"}
+PWD_FILTER = {"pwdCandidateWelcome": "true"}
 
 
 def _value(payload: dict[str, Any], names: list[str]) -> str:
@@ -174,14 +175,14 @@ def _rows_from_html(html: str, page_url: str) -> list[dict[str, object]]:
     return rows
 
 
-def _requests_scrape(max_pages: int) -> list[dict[str, object]]:
+def _requests_scrape(max_pages: int, params: dict[str, str]) -> list[dict[str, object]]:
     session = requests.Session()
     session.headers.update(HEADERS)
     rows: list[dict[str, object]] = []
 
     for page_number in range(1, max_pages + 1):
-        params = {**FILTER_PARAMS, "page": page_number}
-        response = request_with_retries(session, LISTING_URL, params=params)
+        page_params = {**params, "page": page_number}
+        response = request_with_retries(session, LISTING_URL, params=page_params)
         page_rows: list[dict[str, object]] = []
         content_type = response.headers.get("content-type", "")
         if "json" in content_type:
@@ -235,7 +236,7 @@ def _dom_rows(page) -> list[dict[str, object]]:
     return rows
 
 
-def _playwright_scrape(max_pages: int) -> list[dict[str, object]]:
+def _playwright_scrape(max_pages: int, params: dict[str, str]) -> list[dict[str, object]]:
     from playwright.sync_api import sync_playwright
 
     json_payloads: list[Any] = []
@@ -252,13 +253,14 @@ def _playwright_scrape(max_pages: int) -> list[dict[str, object]]:
             return
 
     rows: list[dict[str, object]] = []
+    listing_url = f"{LISTING_URL}?{urlencode(params)}"
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         context = browser.new_context(user_agent=USER_AGENT, viewport={"width": 1366, "height": 900})
         page = context.new_page()
         page.on("response", capture_response)
         try:
-            page.goto(f"{LISTING_URL}?sortBy=NEWEST&pwdCandidateWelcome=true", wait_until="domcontentloaded", timeout=45000)
+            page.goto(listing_url, wait_until="domcontentloaded", timeout=45000)
             page.wait_for_timeout(4000)
             for page_number in range(1, max_pages + 1):
                 for payload in json_payloads:
@@ -289,15 +291,33 @@ def scrape(max_pages: int = MAX_PAGES, output_dir: str | Path = "output") -> dic
     output_path = output_file(output_dir, OUTPUT_FILENAME)
     all_records: list[dict[str, object]]
 
+    filtered_params = {**FILTER_PARAMS, **PWD_FILTER}
+
     try:
-        all_records = _requests_scrape(max_pages)
+        all_records = _requests_scrape(max_pages, filtered_params)
     except Exception as exc:
         print(f"[{SOURCE}] requests path failed: {exc}", flush=True)
         all_records = []
 
     if not all_records:
         try:
-            all_records = _playwright_scrape(max_pages)
+            all_records = _playwright_scrape(max_pages, filtered_params)
+        except Exception as exc:
+            print(f"[{SOURCE}] Playwright fallback failed: {exc}", flush=True)
+            all_records = []
+
+    fallback_used = False
+    if not all_records:
+        fallback_used = True
+        try:
+            all_records = _requests_scrape(max_pages, FILTER_PARAMS)
+        except Exception as exc:
+            print(f"[{SOURCE}] requests fallback failed: {exc}", flush=True)
+            all_records = []
+
+    if not all_records:
+        try:
+            all_records = _playwright_scrape(max_pages, FILTER_PARAMS)
         except Exception as exc:
             print(f"[{SOURCE}] Playwright fallback failed: {exc}", flush=True)
             all_records = []
@@ -307,7 +327,11 @@ def scrape(max_pages: int = MAX_PAGES, output_dir: str | Path = "output") -> dic
     final_records = dedupe_by_apply_url(kept_records)
     save_excel(final_records, output_path)
     log_progress(SOURCE, max_pages, total_scraped, killed_by_filter)
-    error = "NCS pwdCandidateWelcome=true filter returned 0 jobs." if total_scraped == 0 else ""
+    error = ""
+    if total_scraped == 0:
+        error = "NCS returned 0 jobs."
+    elif fallback_used:
+        error = "NCS PWD filter returned 0; fallback used without filter."
     return make_stats(SOURCE, total_scraped, killed_by_filter, len(final_records), output_path, error)
 
 
