@@ -139,12 +139,10 @@ with left_col:
             if output_path.exists():
                 output_path.unlink()
         with st.spinner("Running selected scrapers..."):
-            [_run_source(source) for source in selected_sources]
+            _ = [_run_source(source) for source in selected_sources]
         st.session_state.has_run = True
         st.session_state.last_run_sources = list(selected_sources)
         st.success("Done")
-        st.success("Something --------")
-        print("Something --------")
 
 with right_col:
     _render_downloads(st.session_state.last_run_sources, st.session_state.has_run)
