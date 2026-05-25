@@ -18,19 +18,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 OUTPUT_DIR = PROJECT_ROOT / "output"
 
 SOURCES = [
-    {"name": "naukri", "label": "Naukri.com", "module": "scrapers.naukri", "filename": "naukri.xlsx"},
     {"name": "ncs", "label": "NCS (National Career Service)", "module": "scrapers.ncs", "filename": "ncs.xlsx"},
     {
         "name": "google_jobs",
         "label": "Google Jobs (SerpAPI)",
         "module": "scrapers.google_jobs",
         "filename": "google_jobs.xlsx",
-    },
-    {
-        "name": "company_disability",
-        "label": "Company Disability Pages",
-        "module": "scrapers.company_disability",
-        "filename": "company_disability.xlsx",
     },
     {
         "name": "atypical",
@@ -43,6 +36,13 @@ SOURCES = [
         "label": "SwarajAbility",
         "module": "scrapers.swarajability",
         "filename": "swarajability.xlsx",
+    },
+    {"name": "naukri", "label": "Naukri.com", "module": "scrapers.naukri", "filename": "naukri.xlsx"},
+    {
+        "name": "company_disability",
+        "label": "Company Disability Pages",
+        "module": "scrapers.company_disability",
+        "filename": "company_disability.xlsx",
     },
 ]
 
