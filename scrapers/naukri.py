@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import re
 import time
 from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit
 
 from scrapers.common import (
     apply_kill_filter,
@@ -24,70 +22,13 @@ from utils.schema import EXPLICIT_PWD
 SOURCE = "naukri"
 OUTPUT_FILENAME = "naukri.xlsx"
 PAGE_LOAD_DELAY_MS = 8000
-SCROLL_STEP_DELAY_MS = 900
-POST_SCROLL_DELAY_MS = 3000
-NAUKRI_SLEEP_BETWEEN_PAGES = max(SLEEP_BETWEEN_REQUESTS, 6)
 START_URLS = [
     "https://www.naukri.com/jobs-in-india?candidateType=pw_disability",
     "https://www.naukri.com/jobs-in-india?candidateType=pw_disability&jobType=WFH",
 ]
 
 
-def _page_url(base_url: str, page_number: int) -> str:
-    if page_number == 1:
-        return base_url
-    parts = urlsplit(base_url)
-    path = parts.path.rstrip("/")
-    if re.search(r"-\d+$", path):
-        path = re.sub(r"-\d+$", f"-{page_number}", path)
-    else:
-        path = f"{path}-{page_number}"
-    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
-
-
-def _apply_stealth(page) -> None:
-    """Apply stealth helpers when playwright-stealth is installed."""
-
-    try:
-        from playwright_stealth import stealth_sync
-    except ImportError:
-        return
-
-    try:
-        stealth_sync(page)
-        print(f"[{SOURCE}] playwright-stealth applied", flush=True)
-    except Exception as exc:  # noqa: BLE001 - stealth is best-effort
-        print(f"[{SOURCE}] playwright-stealth skipped: {exc}", flush=True)
-
-
-def _install_browser_patches(context) -> None:
-    context.add_init_script(
-        """
-        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        Object.defineProperty(navigator, 'languages', { get: () => ['en-IN', 'en'] });
-        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-        window.chrome = window.chrome || { runtime: {} };
-        const originalQuery = window.navigator.permissions && window.navigator.permissions.query;
-        if (originalQuery) {
-          window.navigator.permissions.query = (parameters) => (
-            parameters && parameters.name === 'notifications'
-              ? Promise.resolve({ state: Notification.permission })
-              : originalQuery(parameters)
-          );
-        }
-        """
-    )
-
-
-def _human_scroll(page) -> None:
-    for _ in range(5):
-        page.mouse.wheel(0, 900)
-        page.wait_for_timeout(SCROLL_STEP_DELAY_MS)
-    page.mouse.wheel(0, -700)
-    page.wait_for_timeout(POST_SCROLL_DELAY_MS)
-
-
-def _extract_cards(page, source_url: str, listing_type: str) -> list[dict[str, object]]:
+def _extract_cards(page, source_url: str) -> list[dict[str, object]]:
     jobs = page.evaluate(
         """
         () => {
@@ -147,13 +88,15 @@ def _extract_cards(page, source_url: str, listing_type: str) -> list[dict[str, o
     for job in jobs:
         location = clean_text(job.get("location"))
         description = clean_text(job.get("description"))[:300]
-        is_remote = is_wfh_url or any(token in location.lower() for token in ["remote", "wfh", "work from home"])
+        is_remote = is_wfh_url or any(
+            token in location.lower() for token in ["remote", "wfh", "work from home"]
+        )
         record = {
             "title": clean_text(job.get("title")),
             "company": clean_text(job.get("company")),
             "location": location,
             "is_remote": bool(is_remote),
-            "type": listing_type,
+            "type": "job",
             "inclusion_type": EXPLICIT_PWD,
             "stipend_or_salary_raw": clean_text(job.get("salary")),
             "duration": "",
@@ -188,27 +131,22 @@ def scrape(max_pages: int = MAX_PAGES, output_dir: str | Path = "output") -> dic
             viewport={"width": 1366, "height": 900},
             locale="en-IN",
             timezone_id="Asia/Kolkata",
-            extra_http_headers={
-                "Accept-Language": "en-IN,en;q=0.9",
-                "Upgrade-Insecure-Requests": "1",
-            },
+            extra_http_headers={"Accept-Language": "en-IN,en;q=0.9"},
         )
-        _install_browser_patches(context)
         page = context.new_page()
-        _apply_stealth(page)
 
         try:
             for start_url in START_URLS:
                 for page_number in range(1, max_pages + 1):
-                    url = _page_url(start_url, page_number)
+                    url = start_url if page_number == 1 else f"{start_url}&page={page_number}"
                     try:
                         page.goto(url, wait_until="domcontentloaded", timeout=60000)
                         page.wait_for_timeout(PAGE_LOAD_DELAY_MS)
-                        _human_scroll(page)
-                        page_records = _extract_cards(page, start_url, "job")
-                    except Exception as exc:  # noqa: BLE001 - save whatever was collected
+                        page_records = _extract_cards(page, start_url)
+                    except Exception as exc:  # noqa: BLE001
                         print(f"[{SOURCE}] page={page_number} failed: {exc}", flush=True)
                         break
+
                     if not page_records and page_number > 1:
                         break
 
@@ -220,14 +158,18 @@ def scrape(max_pages: int = MAX_PAGES, output_dir: str | Path = "output") -> dic
 
                     if not page_records:
                         break
-                    time.sleep(NAUKRI_SLEEP_BETWEEN_PAGES)
+                    time.sleep(SLEEP_BETWEEN_REQUESTS)
         finally:
             context.close()
             browser.close()
 
     final_records = dedupe_by_apply_url(kept_records)
     save_excel(final_records, output_path)
-    error = "No job cards found; Naukri may be blocking headless scraping or changed its search rendering." if total_scraped == 0 else ""
+    error = (
+        "No job cards found; Naukri may be blocking headless scraping or changed its rendering."
+        if total_scraped == 0
+        else ""
+    )
     return make_stats(SOURCE, total_scraped, killed_by_filter, len(final_records), output_path, error)
 
 

@@ -75,12 +75,6 @@ def first_href(parent: Tag, base_url: str, selectors: Iterable[str]) -> str:
     return ""
 
 
-def text_between(text: str, start: str, stop_labels: Iterable[str]) -> str:
-    pattern = re.escape(start) + r"\s*:?\s*(.*?)\s*(?=" + "|".join(re.escape(label) for label in stop_labels) + r"|$)"
-    match = re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL)
-    return clean_text(match.group(1)) if match else ""
-
-
 def apply_money(record: dict[str, object]) -> dict[str, object]:
     raw = str(record.get("stipend_or_salary_raw") or "")
     low, high, period = parse_money(raw)

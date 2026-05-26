@@ -20,11 +20,7 @@ SOURCES = [
     {"name": "naukri", "module": "scrapers.naukri", "filename": "naukri.xlsx"},
     {"name": "ncs", "module": "scrapers.ncs", "filename": "ncs.xlsx"},
     {"name": "google_jobs", "module": "scrapers.google_jobs", "filename": "google_jobs.xlsx"},
-    {
-        "name": "company_disability",
-        "module": "scrapers.company_disability",
-        "filename": "company_disability.xlsx",
-    },
+
     {"name": "atypical", "module": "scrapers.atypical", "filename": "atypical.xlsx"},
     {"name": "swarajability", "module": "scrapers.swarajability", "filename": "swarajability.xlsx"},
 ]

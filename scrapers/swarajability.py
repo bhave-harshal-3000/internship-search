@@ -105,14 +105,11 @@ def scrape(max_pages: int = MAX_PAGES, output_dir: str | Path = "output") -> dic
     if not isinstance(jobs, list):
         jobs = []
 
+    # Only keep jobs that explicitly match hearing/speech disability
     filtered = [job for job in jobs if _matches_target(job.get("disabilities") or [])]
-    jobs_to_save = filtered if filtered else jobs
 
-    total_scraped = 0
-    killed_by_filter = 0
     rows: list[dict[str, object]] = []
-
-    for job in jobs_to_save:
+    for job in filtered:
         if not isinstance(job, dict):
             continue
         description = _clean_html(job.get("description"))

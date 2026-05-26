@@ -29,7 +29,7 @@ COLUMNS = [
 EXPLICIT_PWD = "explicit_pwd"
 REMOTE_ACCESSIBLE = "remote_accessible"
 KEYWORD_PWD = "keyword_pwd"
-COMPANY_DISABILITY_PROGRAM = "company_disability_program"
+
 INCLUSIVE_HIRING = "inclusive_hiring"
 AI_ACCESSIBLE = "ai_accessible"
 

@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import re
 import time
 from pathlib import Path
-from typing import Iterable
 from urllib.parse import urljoin
 
 import requests
@@ -111,16 +109,6 @@ def _listing_cards(html: str) -> list[dict[str, str]]:
     return listings
 
 
-def _infer_type(title: str, employment_type: str) -> str:
-    text = f"{title} {employment_type}".lower()
-    return "internship" if "intern" in text else "job"
-
-
-def _is_remote(*parts: str) -> bool:
-    text = " ".join(part for part in parts if part).lower()
-    return any(token in text for token in ["remote", "work from home", "wfh"])
-
-
 def scrape(max_pages: int = MAX_PAGES, output_dir: str | Path = "output") -> dict[str, object]:
     output_path = output_file(output_dir, OUTPUT_FILENAME)
     session = requests.Session()
@@ -129,8 +117,6 @@ def scrape(max_pages: int = MAX_PAGES, output_dir: str | Path = "output") -> dic
     response = request_with_retries(session, LISTING_URL, timeout=30)
     listings = _listing_cards(response.text)
 
-    total_scraped = 0
-    killed_by_filter = 0
     rows: list[dict[str, object]] = []
 
     for index, listing in enumerate(listings, start=1):
@@ -139,21 +125,32 @@ def scrape(max_pages: int = MAX_PAGES, output_dir: str | Path = "output") -> dic
             continue
         try:
             detail = _parse_detail(session, job_url)
-        except Exception as exc:  # noqa: BLE001 - keep partial info when detail fails
+        except Exception as exc:  # noqa: BLE001
             print(f"[{SOURCE}] detail failed: {job_url} ({exc})", flush=True)
-            detail = {"description": "", "employment_type": "", "work_modality": "", "location": "", "stipend": "", "apply_url": job_url}
+            detail = {
+                "description": "",
+                "employment_type": "",
+                "work_modality": "",
+                "location": "",
+                "stipend": "",
+                "apply_url": job_url,
+            }
 
         location = clean_text(detail.get("location") or listing.get("location") or "")
         description = clean_text(detail.get("description"))
         employment_type = clean_text(detail.get("employment_type"))
         work_modality = clean_text(detail.get("work_modality"))
+        title = clean_text(listing.get("title"))
 
         row = {
-            "title": clean_text(listing.get("title")),
+            "title": title,
             "company": clean_text(listing.get("company")) or "Atypical Advantage",
-            "location": location or "",
-            "is_remote": _is_remote(location, work_modality, description),
-            "type": _infer_type(listing.get("title", ""), employment_type),
+            "location": location,
+            "is_remote": any(
+                token in f"{location} {work_modality} {description}".lower()
+                for token in ["remote", "work from home", "wfh"]
+            ),
+            "type": "internship" if "intern" in f"{title} {employment_type}".lower() else "job",
             "inclusion_type": EXPLICIT_PWD,
             "confidence_level": "HIGH",
             "backend_type": "custom_api",
@@ -166,16 +163,15 @@ def scrape(max_pages: int = MAX_PAGES, output_dir: str | Path = "output") -> dic
         }
         rows.append(apply_money(row))
 
-        total_scraped = len(rows)
-        kept_preview, killed_preview = apply_kill_filter(rows)
-        killed_by_filter = killed_preview
-        log_progress(SOURCE, index, total_scraped, killed_by_filter)
+        _, killed_preview = apply_kill_filter(rows)
+        log_progress(SOURCE, index, len(rows), killed_preview)
         time.sleep(SLEEP_BETWEEN_REQUESTS)
 
+    total_scraped = len(rows)
     kept_records, killed_by_filter = apply_kill_filter(rows)
     final_records = dedupe_by_apply_url(kept_records)
     save_excel(final_records, output_path)
-    return make_stats(SOURCE, len(rows), killed_by_filter, len(final_records), output_path)
+    return make_stats(SOURCE, total_scraped, killed_by_filter, len(final_records), output_path)
 
 
 if __name__ == "__main__":
