@@ -106,7 +106,7 @@ def _render_downloads(sources: list[dict[str, str]], has_run: bool) -> None:
 st.set_page_config(page_title="Internship-Search", page_icon="\U0001F50D", layout="wide")
 
 st.title("Internship + Job Search")
-st.caption("Disability-friendly internship and job scraper")
+st.caption("Speech and Hearing Impaired internships and job search tool.")
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
