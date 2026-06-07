@@ -1,4 +1,4 @@
-"""Streamlit frontend for Intern-Search scrapers."""
+"""Streamlit frontend for DeafLink scrapers."""
 
 from __future__ import annotations
 
@@ -47,11 +47,11 @@ def _run_source(source: dict[str, str]) -> dict[str, Any]:
         stats = module.scrape(max_pages=MAX_PAGES, output_dir=str(OUTPUT_DIR))
         stats.setdefault("error", "")
         return stats
-    except Exception as exc:  # noqa: BLE001 - isolate each source
+    except Exception as exc:  # noqa: BLE001
         output_path = OUTPUT_DIR / source["filename"]
         try:
             save_excel([], output_path)
-        except Exception as save_exc:  # noqa: BLE001 - preserve original error
+        except Exception as save_exc:  # noqa: BLE001
             return {
                 "source": source["name"],
                 "total_scraped": 0,
@@ -68,6 +68,16 @@ def _run_source(source: dict[str, str]) -> dict[str, Any]:
             "output_file": str(output_path),
             "error": str(exc),
         }
+
+
+def _parse_emails(raw: str) -> list[str]:
+    """Return a cleaned list of valid-looking email addresses from a comma-separated string."""
+    emails = []
+    for part in raw.split(","):
+        email = part.strip()
+        if email and "@" in email and "." in email.split("@")[-1]:
+            emails.append(email)
+    return emails
 
 
 def _load_bytes(path: Path) -> bytes:
@@ -103,24 +113,96 @@ def _render_downloads(sources: list[dict[str, str]], has_run: bool) -> None:
         st.warning("Run the scrapers to generate downloadable XLSX files.")
 
 
-st.set_page_config(page_title="Internship-Search", page_icon="\U0001F50D", layout="wide")
+# ── Page config ──────────────────────────────────────────────────────────────
+st.set_page_config(page_title="DeafLink Job Search", page_icon="🔍", layout="wide")
 
-st.title("Internship + Job Search")
-st.caption("Speech and Hearing Impaired internships and job search tool.")
+st.markdown("""
+<style>
+  /* Reduce default top padding but keep breathing room */
+  .block-container { padding-top: 1.8rem !important; padding-bottom: 1rem !important; }
+  /* Tight checkboxes only */
+  div[data-testid="stCheckbox"] { margin-bottom: -4px !important; }
+  /* Section label spacing */
+  .section-label { margin-top: 1.4rem !important; margin-bottom: 0.3rem !important; font-size: 0.95rem; }
+  /* Input field — slightly narrower so it doesn't touch the right column */
+  div[data-testid="stTextInput"] > div { max-width: 95% !important; }
+  /* Downloads column: left border as separator + padding */
+  div[data-testid="stHorizontalBlock"] > div:last-child {
+    border-left: 1px solid rgba(250,250,250,0.12) !important;
+    padding-left: 2rem !important;
+    margin-top: 0.4rem !important;
+  }
+  /* Reduce hr height */
+  hr { margin: 0.8rem 0 !important; border-color: rgba(250,250,250,0.1) !important; }
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("### 🔍 DeafLink — Internship + Job Search")
+st.caption("Disability-friendly job search for speech and hearing impaired candidates.")
+
+# Spacer between title and body
+st.markdown("<div style='margin-top:0.8rem'></div>", unsafe_allow_html=True)
+
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
+# ── Session state ─────────────────────────────────────────────────────────────
 if "has_run" not in st.session_state:
     st.session_state.has_run = False
 if "last_run_sources" not in st.session_state:
     st.session_state.last_run_sources = []
+if "last_stats" not in st.session_state:
+    st.session_state.last_stats = []
 
+# ── Layout ────────────────────────────────────────────────────────────────────
 panel = st.container()
 left_col, right_col = panel.columns([2, 1], gap="small")
 
 with left_col:
-    st.subheader("Sources")
+    # ── Recipients ────────────────────────────────────────────────────────────
+    st.markdown("**📧 Email Recipients** — enter one or more addresses, comma-separated")
+    recipient_input = st.text_input(
+        label="Recipient email(s)",
+        placeholder="e.g.  student@college.edu, coordinator@ngo.org",
+        label_visibility="collapsed",
+        key="recipient_input",
+    )
+    parsed_emails = _parse_emails(recipient_input)
+
+    # Dynamic styling and validation message
+    if parsed_emails:
+        st.markdown(
+            """
+            <style>
+                div[data-testid="stTextInput"] input {
+                    border-color: #28a745 !important;
+                    box-shadow: 0 0 0 0.2rem rgba(40, 167, 69, 0.25) !important;
+                }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
+        st.markdown("<p style='color: #28a745; margin-top: -12px; margin-bottom: 4px; font-size: 13px; font-weight: 500;'>✅ Valid email address(es) entered.</p>", unsafe_allow_html=True)
+    elif recipient_input:
+        st.markdown(
+            """
+            <style>
+                div[data-testid="stTextInput"] input {
+                    border-color: #dc3545 !important;
+                    box-shadow: 0 0 0 0.2rem rgba(220, 53, 69, 0.25) !important;
+                }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
+        st.markdown("<p style='color: #dc3545; margin-top: -12px; margin-bottom: 4px; font-size: 13px; font-weight: 500;'>❌ No valid email addresses found. Check the format.</p>", unsafe_allow_html=True)
+
+    # Divider before Sources
+    st.markdown("---")
+
+    # ── Sources ───────────────────────────────────────────────────────────────
+    st.markdown("**Sources**")
     selected_sources: list[dict[str, str]] = []
     for source in SOURCES:
         if st.checkbox(source["label"], value=True, key=f"src_{source['name']}"):
@@ -132,11 +214,26 @@ with left_col:
             output_path = OUTPUT_DIR / source["filename"]
             if output_path.exists():
                 output_path.unlink()
+
         with st.spinner("Running selected scrapers..."):
-            _ = [_run_source(source) for source in selected_sources]
+            all_stats = [_run_source(source) for source in selected_sources]
+
         st.session_state.has_run = True
         st.session_state.last_run_sources = list(selected_sources)
-        st.success("Done")
+        st.session_state.last_stats = all_stats
+        st.success("Scraping complete!")
+
+        # ── Send email if recipients provided ─────────────────────────────────
+        if parsed_emails:
+            with st.spinner(f"Sending results to {len(parsed_emails)} recipient(s)..."):
+                try:
+                    from utils.mailer import send_email
+                    send_email(parsed_emails, all_stats, OUTPUT_DIR)
+                    st.success(f"✅ Email sent to: {', '.join(parsed_emails)}")
+                except Exception as mail_exc:  # noqa: BLE001
+                    st.error(f"❌ Email failed: {mail_exc}")
+        else:
+            st.info("No recipient email entered — skipping email delivery.")
 
 with right_col:
     _render_downloads(st.session_state.last_run_sources, st.session_state.has_run)

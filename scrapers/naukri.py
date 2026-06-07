@@ -165,11 +165,7 @@ def scrape(max_pages: int = MAX_PAGES, output_dir: str | Path = "output") -> dic
 
     final_records = dedupe_by_apply_url(kept_records)
     save_excel(final_records, output_path)
-    error = (
-        "No job cards found; Naukri may be blocking headless scraping or changed its rendering."
-        if total_scraped == 0
-        else ""
-    )
+    error = "Naukri.com listings could not be retrieved. The site may be temporarily unavailable." if total_scraped == 0 else ""
     return make_stats(SOURCE, total_scraped, killed_by_filter, len(final_records), output_path, error)
 
 

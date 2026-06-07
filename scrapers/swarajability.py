@@ -127,7 +127,7 @@ def scrape(max_pages: int = MAX_PAGES, output_dir: str | Path = "output") -> dic
             "duration": "",
             "posted_at": clean_text((job.get("createdAt") or "")[:10]),
             "apply_url": clean_text(
-                f"https://portal.swarajability.org/job/{job.get('id')}" if job.get("id") else ""
+                f"https://portal.swarajability.org/apply-job/{job.get('id')}" if job.get("id") else ""
             ),
             "source": SOURCE,
             "description_snippet": description[:300],

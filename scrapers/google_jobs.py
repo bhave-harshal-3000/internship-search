@@ -1,4 +1,4 @@
-"""Google Jobs scraper using SerpAPI."""
+"""Google Jobs scraper — powered by Jooble API."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import requests
 
 try:
     from dotenv import load_dotenv
-except ImportError:  # pragma: no cover - requirements.txt installs python-dotenv
+except ImportError:
     load_dotenv = None
 
 from scrapers.common import (
@@ -23,7 +23,6 @@ from scrapers.common import (
     log_progress,
     make_stats,
     output_file,
-    request_with_retries,
 )
 from utils.config import MAX_PAGES, SLEEP_BETWEEN_REQUESTS
 from utils.excel_writer import save_excel
@@ -33,112 +32,47 @@ from utils.schema import KEYWORD_PWD
 
 SOURCE = "google_jobs"
 OUTPUT_FILENAME = "google_jobs.xlsx"
-SERPAPI_URL = "https://serpapi.com/search.json"
+JOOBLE_API_URL = "https://jooble.org/api/{key}"
 
-# Reduced from the larger prompt list to avoid near-duplicate searches while
-# preserving coverage across Indian PWD terminology and communication access.
 PWD_QUERIES = [
-    "PWD jobs India remote",
-    "persons with disability jobs India",
-    "specially abled jobs internships India",
-    "divyang jobs India",
-    "PwBD jobs India",
-    "deaf hearing impaired jobs India remote",
-    "speech impaired jobs India",
+    {"keywords": "PWD disability deaf hearing impaired jobs", "location": "India"},
+    {"keywords": "speech impaired specially abled jobs internship", "location": "India"},
+    {"keywords": "divyang PwBD disability jobs remote", "location": "India"},
 ]
 
 
-def _project_root() -> Path:
-    return Path(__file__).resolve().parents[1]
-
-
 def _load_api_key() -> str:
-    env_path = _project_root() / ".env"
+    env_path = Path(__file__).resolve().parents[1] / ".env"
     if load_dotenv:
         load_dotenv(env_path)
     elif env_path.exists():
         for line in env_path.read_text(encoding="utf-8").splitlines():
-            if line.strip().startswith("SERPAPI_KEY="):
-                os.environ.setdefault("SERPAPI_KEY", line.split("=", 1)[1].strip())
-    return clean_text(os.getenv("SERPAPI_KEY"))
-
-
-def _first_apply_url(job: dict[str, Any]) -> str:
-    apply_options = job.get("apply_options") or []
-    if isinstance(apply_options, list):
-        for option in apply_options:
-            if isinstance(option, dict) and option.get("link"):
-                return clean_text(option.get("link"))
-    for key in ["share_link", "link", "job_id"]:
-        value = clean_text(job.get(key))
-        if value:
-            return value
-    return ""
-
-
-def _salary_text(job: dict[str, Any]) -> str:
-    detected = job.get("detected_extensions") or {}
-    if isinstance(detected, dict):
-        for key in ["salary", "salary_range", "pay", "stipend"]:
-            value = clean_text(detected.get(key))
-            if value:
-                return value
-
-    extensions = job.get("extensions") or []
-    if isinstance(extensions, list):
-        for extension in extensions:
-            text = clean_text(extension)
-            lowered = text.lower()
-            if any(token in lowered for token in ["₹", "rs", "inr", "lpa", "lakh", "salary", "stipend"]):
-                return text
-    return ""
-
-
-def _posted_at(job: dict[str, Any]) -> str:
-    detected = job.get("detected_extensions") or {}
-    if isinstance(detected, dict):
-        for key in ["posted_at", "date_posted", "posted"]:
-            value = clean_text(detected.get(key))
-            if value:
-                return value
-
-    extensions = job.get("extensions") or []
-    if isinstance(extensions, list):
-        for extension in extensions:
-            text = clean_text(extension)
-            if "ago" in text.lower() or "posted" in text.lower():
-                return text
-    return ""
+            if line.strip().startswith("JOOBLE_KEY="):
+                os.environ.setdefault("JOOBLE_KEY", line.split("=", 1)[1].strip())
+    return clean_text(os.getenv("JOOBLE_KEY", ""))
 
 
 def _is_remote(job: dict[str, Any]) -> bool:
-    detected = job.get("detected_extensions") or {}
-    if isinstance(detected, dict) and detected.get("work_from_home"):
-        return True
-    text = " ".join(
-        [
-            clean_text(job.get("title")),
-            clean_text(job.get("location")),
-            clean_text(job.get("description")),
-            clean_text(" ".join(str(item) for item in job.get("extensions") or [])),
-        ]
-    ).lower()
+    text = " ".join([
+        clean_text(job.get("title")),
+        clean_text(job.get("location")),
+        clean_text(job.get("snippet")),
+        clean_text(job.get("type")),
+    ]).lower()
     return any(token in text for token in ["remote", "work from home", "wfh"])
 
 
 def _listing_type(job: dict[str, Any]) -> str:
-    text = " ".join(
-        [
-            clean_text(job.get("title")),
-            clean_text(job.get("description")),
-            clean_text(" ".join(str(item) for item in job.get("extensions") or [])),
-        ]
-    ).lower()
+    text = " ".join([
+        clean_text(job.get("title")),
+        clean_text(job.get("snippet")),
+        clean_text(job.get("type")),
+    ]).lower()
     return "internship" if "intern" in text else "job"
 
 
 def _rows_from_response(payload: dict[str, Any]) -> list[dict[str, object]]:
-    jobs = payload.get("jobs_results") or []
+    jobs = payload.get("jobs") or []
     if not isinstance(jobs, list):
         return []
 
@@ -146,78 +80,79 @@ def _rows_from_response(payload: dict[str, Any]) -> list[dict[str, object]]:
     for job in jobs:
         if not isinstance(job, dict):
             continue
-        description = clean_text(job.get("description"))
+
+        title = clean_text(job.get("title"))
+        company = clean_text(job.get("company"))
+        snippet = clean_text(job.get("snippet"))
+        location = clean_text(job.get("location"))
+        salary = clean_text(job.get("salary"))
+        apply_url = clean_text(job.get("link"))
+        posted_at = clean_text(job.get("updated") or "")[:10]  # ISO date, trim to YYYY-MM-DD
+
+        if not (title or apply_url):
+            continue
+        if not has_inclusion_keyword(title, company, snippet):
+            continue
+
         row = {
-            "title": clean_text(job.get("title")),
-            "company": clean_text(job.get("company_name")),
-            "location": clean_text(job.get("location")),
+            "title": title,
+            "company": company,
+            "location": location,
             "is_remote": _is_remote(job),
             "type": _listing_type(job),
             "inclusion_type": KEYWORD_PWD,
-            "stipend_or_salary_raw": _salary_text(job),
+            "stipend_or_salary_raw": salary,
             "duration": "",
-            "posted_at": _posted_at(job),
-            "apply_url": _first_apply_url(job),
+            "posted_at": posted_at,
+            "apply_url": apply_url,
             "source": SOURCE,
-            "description_snippet": description[:300],
+            "description_snippet": snippet[:300],
         }
-        if (row["title"] or row["apply_url"]) and has_inclusion_keyword(
-            row.get("title"),
-            row.get("company"),
-            row.get("description_snippet"),
-        ):
-            rows.append(apply_money(row))
+        rows.append(apply_money(row))
     return rows
-
-
-def _next_page_token(payload: dict[str, Any]) -> str:
-    pagination = payload.get("serpapi_pagination") or {}
-    if not isinstance(pagination, dict):
-        return ""
-    return clean_text(pagination.get("next_page_token"))
 
 
 def scrape(max_pages: int = MAX_PAGES, output_dir: str | Path = "output") -> dict[str, object]:
     output_path = output_file(output_dir, OUTPUT_FILENAME)
     api_key = _load_api_key()
-    if not api_key:
-        print("[google_jobs] SERPAPI_KEY missing in .env; skipping Google Jobs scraper.", flush=True)
-        save_excel([], output_path)
-        return make_stats(SOURCE, 0, 0, 0, output_path, "SERPAPI_KEY missing")
 
+    if not api_key:
+        print(f"[{SOURCE}] JOOBLE_KEY missing in .env; skipping.", flush=True)
+        save_excel([], output_path)
+        return make_stats(SOURCE, 0, 0, 0, output_path, "JOOBLE_KEY missing")
+
+    url = JOOBLE_API_URL.format(key=api_key)
     session = requests.Session()
-    session.headers.update(HEADERS)
+    session.headers.update({**HEADERS, "Content-Type": "application/json"})
 
     total_scraped = 0
     killed_by_filter = 0
     kept_records: list[dict[str, object]] = []
 
     for query in PWD_QUERIES:
-        next_token = ""
         for page_number in range(1, max_pages + 1):
-            params = {
-                "engine": "google_jobs",
-                "q": query,
-                "gl": "in",
-                "hl": "en",
-                "api_key": api_key,
-            }
-            if next_token:
-                params["next_page_token"] = next_token
+            body = {**query, "page": page_number}
+            try:
+                response = session.post(url, json=body, timeout=30)
+                response.raise_for_status()
+                payload = response.json()
+            except Exception as exc:
+                # Log full detail to console for debugging — never expose to users
+                print(f"[{SOURCE}] query={query['keywords']!r} page={page_number} failed: {exc}", flush=True)
+                break
 
-            response = request_with_retries(session, SERPAPI_URL, params=params, timeout=45)
-            payload = response.json()
-            page_records = _rows_from_response(payload)
-
-            total_scraped += len(page_records)
-            kept_page, killed_page = apply_kill_filter(page_records)
+            page_rows = _rows_from_response(payload)
+            total_scraped += len(page_rows)
+            kept_page, killed_page = apply_kill_filter(page_rows)
             killed_by_filter += killed_page
             kept_records.extend(kept_page)
-            log_progress(f"{SOURCE}:{query}", page_number, total_scraped, killed_by_filter)
+            log_progress(f"{SOURCE}:{query['keywords'][:30]}", page_number, total_scraped, killed_by_filter)
 
-            next_token = _next_page_token(payload)
-            if not next_token:
+            # Jooble returns totalCount — stop when we've fetched all pages
+            total_count = payload.get("totalCount") or 0
+            if not page_rows or page_number * 20 >= int(total_count):
                 break
+
             time.sleep(SLEEP_BETWEEN_REQUESTS)
 
     final_records = dedupe_by_apply_url(kept_records)
