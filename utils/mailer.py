@@ -171,6 +171,12 @@ def build_html(stats_list: list[dict[str, Any]], output_dir: Path) -> str:
     <!-- Body -->
     <div style="padding:28px 32px;">
 
+      <!-- Clipping Warning -->
+      <div style="margin-bottom:24px;padding:12px 16px;background:#fff3cd;border-left:4px solid #ffc107;border-radius:4px;color:#856404;font-size:13.5px;line-height:1.5;">
+        ⚠️ <strong>Note:</strong> Due to the large number of listings, Gmail may clip this email at the bottom. 
+        Please scroll to the bottom and click the <strong>"[Message clipped] View entire message"</strong> link to see all jobs. You can also refer the attached excel files.
+      </div>
+
       <h2 style="font-size:16px;color:#343a40;margin-top:0;">Summary</h2>
       {_summary_table(stats_list)}
 
